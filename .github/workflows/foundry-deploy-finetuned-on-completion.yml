@@ -1,0 +1,106 @@
+name: Foundry Deploy Fine-tuned Model on Completion
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: "*/30 * * * *"  # every 30 minutes
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout (optional)
+        uses: actions/checkout@v4
+
+      # Obtain an Azure token for ARM calls.
+      # The official deploy doc uses a Bearer token and suggests `az account get-access-token`. [6](https://github.com/MicrosoftDocs/azure-ai-docs/blob/main/articles/ai-foundry/openai/how-to/fine-tuning-deploy.md?tabs=rest)
+      - name: Azure Login
+        uses: azure/login@v2
+        with:
+          # configure according to your org’s standard (OIDC recommended)
+          client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+
+      - name: Get ARM access token
+        id: arm_token
+        run: |
+          set -euo pipefail
+          token=$(az account get-access-token --resource https://management.azure.com/ --query accessToken -o tsv)
+          echo "token=$token" >> $GITHUB_OUTPUT
+        # Using az to get-access-token is described as an easy method for bearer tokens [6](https://github.com/MicrosoftDocs/azure-ai-docs/blob/main/articles/ai-foundry/openai/how-to/fine-tuning-deploy.md?tabs=rest)
+
+      - name: Find succeeded fine-tuning jobs
+        id: find_jobs
+        env:
+          AOAI_ENDPOINT: ${{ secrets.AZURE_OPENAI_ENDPOINT }}
+          AOAI_KEY: ${{ secrets.AZURE_OPENAI_API_KEY }}
+        run: |
+          set -euo pipefail
+          resp=$(curl -sS -X GET "${AOAI_ENDPOINT}/openai/fine_tuning/jobs?api-version=2024-10-21" \
+            -H "api-key: ${AOAI_KEY}")
+          echo "$resp" | jq '.data | length'
+
+          # Extract fine_tuned_model values for succeeded jobs (most recent first)
+          echo "$resp" | jq -r '
+            .data
+            | map(select(.status=="succeeded" and .fine_tuned_model!=null))
+            | sort_by(.created_at) | reverse
+            | .[].fine_tuned_model
+          ' > /tmp/succeeded_models.txt
+
+          echo "Found $(wc -l < /tmp/succeeded_models.txt) succeeded models"
+        # Listing fine-tuning jobs is a documented endpoint [3](https://learn.microsoft.com/en-us/rest/api/azureopenai/fine-tuning/list?view=rest-azureopenai-2024-10-21)
+
+      - name: List current deployments
+        id: list_deployments
+        env:
+          ARM_TOKEN: ${{ steps.arm_token.outputs.token }}
+          SUBSCRIPTION: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+          RG: ${{ secrets.AZURE_RESOURCE_GROUP }}
+          ACCOUNT: ${{ secrets.AZURE_OPENAI_RESOURCE_NAME }}
+        run: |
+          set -euo pipefail
+          url="https://management.azure.com/subscriptions/${SUBSCRIPTION}/resourceGroups/${RG}/providers/Microsoft.CognitiveServices/accounts/${ACCOUNT}/deployments?api-version=2024-10-01"
+          resp=$(curl -sS -H "Authorization: Bearer ${ARM_TOKEN}" "$url")
+          echo "$resp" | jq -r '.value[].name' > /tmp/deployments.txt
+        # Deployments list endpoint is documented [9](https://learn.microsoft.com/en-us/rest/api/aiservices/accountmanagement/deployments/list?view=rest-aiservices-accountmanagement-2024-10-01)
+
+      - name: Deploy any new fine-tuned models
+        env:
+          ARM_TOKEN: ${{ steps.arm_token.outputs.token }}
+          SUBSCRIPTION: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+          RG: ${{ secrets.AZURE_RESOURCE_GROUP }}
+          ACCOUNT: ${{ secrets.AZURE_OPENAI_RESOURCE_NAME }}
+        run: |
+          set -euo pipefail
+
+          while read -r ft_model; do
+            [ -z "$ft_model" ] && continue
+
+            # deterministic deployment name derived from fine_tuned_model string
+            # keep it short and Azure-safe
+            dep="ft-$(echo "$ft_model" | sha256sum | cut -c1-12)"
+
+            if grep -qx "$dep" /tmp/deployments.txt; then
+              echo "Deployment $dep already exists — skipping"
+              continue
+            fi
+
+            url="https://management.azure.com/subscriptions/${SUBSCRIPTION}/resourceGroups/${RG}/providers/Microsoft.CognitiveServices/accounts/${ACCOUNT}/deployments/${dep}?api-version=2024-10-01"
+
+            payload=$(jq -n --arg modelName "$ft_model" '{
+              sku: { name: "standard", capacity: 1 },
+              properties: { model: { format: "OpenAI", name: $modelName, version: "1" } }
+            }')
+
+            echo "Creating deployment $dep for $ft_model"
+            curl -sS -X PUT "$url" \
+              -H "Authorization: Bearer ${ARM_TOKEN}" \
+              -H "Content-Type: application/json" \
+              -d "$payload" | jq .
+
+          done < /tmp/succeeded_models.txt
+        # Deployment create/update ARM endpoint is documented [5](https://learn.microsoft.com/en-us/rest/api/aiservices/accountmanagement/deployments/create-or-update?view=rest-aiservices-accountmanagement-2024-10-01)
+        # Payload pattern for deploying a fine_tuned_model is shown in Microsoft’s fine-tuned deployment doc [6](https://github.com/MicrosoftDocs/azure-ai-docs/blob/main/articles/ai-foundry/openai/how-to/fine-tuning-deploy.md?tabs=rest)

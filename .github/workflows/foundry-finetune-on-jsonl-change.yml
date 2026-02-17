@@ -1,0 +1,100 @@
+name: Foundry Fine-tune on JSONL change
+
+on:
+  push:
+    branches: [ main ]
+    paths:
+      - "data/**/*.jsonl"
+
+jobs:
+  finetune:
+    runs-on: ubuntu-latest
+
+    outputs:
+      job_id: ${{ steps.create_job.outputs.job_id }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Validate JSONL
+        run: |
+          python scripts/validate_jsonl.py data/train.jsonl
+          python scripts/validate_jsonl.py data/valid.jsonl
+
+      - name: Upload training file (purpose=fine-tune)
+        id: upload_train
+        env:
+          AOAI_ENDPOINT: ${{ secrets.AZURE_OPENAI_ENDPOINT }}
+          AOAI_KEY: ${{ secrets.AZURE_OPENAI_API_KEY }}
+        run: |
+          set -euo pipefail
+          resp=$(curl -sS -X POST "${AOAI_ENDPOINT}/openai/files?api-version=2024-10-21" \
+            -H "api-key: ${AOAI_KEY}" \
+            -F "purpose=fine-tune" \
+            -F "file=@data/train.jsonl")
+          echo "$resp" | jq .
+          file_id=$(echo "$resp" | jq -r '.id')
+          echo "file_id=$file_id" >> $GITHUB_OUTPUT
+        # Files upload endpoint and purpose are documented here [1](https://learn.microsoft.com/en-us/rest/api/azureopenai/files/upload?view=rest-azureopenai-2024-10-21)
+
+      - name: Upload validation file (purpose=fine-tune)
+        id: upload_valid
+        env:
+          AOAI_ENDPOINT: ${{ secrets.AZURE_OPENAI_ENDPOINT }}
+          AOAI_KEY: ${{ secrets.AZURE_OPENAI_API_KEY }}
+        run: |
+          set -euo pipefail
+          resp=$(curl -sS -X POST "${AOAI_ENDPOINT}/openai/files?api-version=2024-10-21" \
+            -H "api-key: ${AOAI_KEY}" \
+            -F "purpose=fine-tune" \
+            -F "file=@data/valid.jsonl")
+          echo "$resp" | jq .
+          file_id=$(echo "$resp" | jq -r '.id')
+          echo "file_id=$file_id" >> $GITHUB_OUTPUT
+        # Files upload endpoint and purpose are documented here [1](https://learn.microsoft.com/en-us/rest/api/azureopenai/files/upload?view=rest-azureopenai-2024-10-21)
+
+      - name: Create fine-tuning job
+        id: create_job
+        env:
+          AOAI_ENDPOINT: ${{ secrets.AZURE_OPENAI_ENDPOINT }}
+          AOAI_KEY: ${{ secrets.AZURE_OPENAI_API_KEY }}
+          TRAIN_FILE: ${{ steps.upload_train.outputs.file_id }}
+          VALID_FILE: ${{ steps.upload_valid.outputs.file_id }}
+        run: |
+          set -euo pipefail
+          # Use suffix to trace the job to a commit
+          suffix="gh-${GITHUB_SHA::7}"
+
+          payload=$(jq -n \
+            --arg model "gpt-4o-mini-2024-07-18" \
+            --arg training_file "$TRAIN_FILE" \
+            --arg validation_file "$VALID_FILE" \
+            --arg suffix "$suffix" \
+            '{model:$model, training_file:$training_file, validation_file:$validation_file, suffix:$suffix}')
+
+          resp=$(curl -sS -X POST "${AOAI_ENDPOINT}/openai/fine_tuning/jobs?api-version=2024-10-21" \
+            -H "api-key: ${AOAI_KEY}" \
+            -H "Content-Type: application/json" \
+            -d "$payload")
+
+          echo "$resp" | jq .
+          job_id=$(echo "$resp" | jq -r '.id')
+          echo "job_id=$job_id" >> $GITHUB_OUTPUT
+
+        # Fine-tuning create endpoint supports model, training_file, validation_file, suffix [2](https://learn.microsoft.com/en-us/rest/api/azureopenai/fine-tuning/create?view=rest-azureopenai-2024-10-21)
+
+      - name: Persist job id artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: finetune-job
+          path: |
+            # write a simple file
+            /tmp/finetune_job_id.txt
+        run: |
+          echo "${{ steps.create_job.outputs.job_id }}" > /tmp/finetune_job_id.txt
