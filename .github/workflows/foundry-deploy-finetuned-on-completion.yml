@@ -7,6 +7,7 @@ on:
 
 jobs:
   deploy:
+    environment: azure-foundry-dev
     runs-on: ubuntu-latest
 
     steps:
@@ -18,7 +19,7 @@ jobs:
       - name: Azure Login
         uses: azure/login@v2
         with:
-          # configure according to your org’s standard (OIDC recommended)
+          # configure according to your orgâ€™s standard (OIDC recommended)
           client-id: ${{ secrets.AZURE_CLIENT_ID }}
           tenant-id: ${{ secrets.AZURE_TENANT_ID }}
           subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
@@ -84,7 +85,7 @@ jobs:
             dep="ft-$(echo "$ft_model" | sha256sum | cut -c1-12)"
 
             if grep -qx "$dep" /tmp/deployments.txt; then
-              echo "Deployment $dep already exists — skipping"
+              echo "Deployment $dep already exists â€” skipping"
               continue
             fi
 
@@ -103,4 +104,4 @@ jobs:
 
           done < /tmp/succeeded_models.txt
         # Deployment create/update ARM endpoint is documented [5](https://learn.microsoft.com/en-us/rest/api/aiservices/accountmanagement/deployments/create-or-update?view=rest-aiservices-accountmanagement-2024-10-01)
-        # Payload pattern for deploying a fine_tuned_model is shown in Microsoft’s fine-tuned deployment doc [6](https://github.com/MicrosoftDocs/azure-ai-docs/blob/main/articles/ai-foundry/openai/how-to/fine-tuning-deploy.md?tabs=rest)
+        # Payload pattern for deploying a fine_tuned_model is shown in Microsoftâ€™s fine-tuned deployment doc [6](https://github.com/MicrosoftDocs/azure-ai-docs/blob/main/articles/ai-foundry/openai/how-to/fine-tuning-deploy.md?tabs=rest)
