@@ -90,11 +90,12 @@ jobs:
         # Fine-tuning create endpoint supports model, training_file, validation_file, suffix [2](https://learn.microsoft.com/en-us/rest/api/azureopenai/fine-tuning/create?view=rest-azureopenai-2024-10-21)
 
       - name: Persist job id artifact
+        run: |
+          set -euo pipefail
+          echo "${{ steps.create_job.outputs.job_id }}" > /tmp/finetune_job_id.txt
+
+      - name: Upload job id artifact
         uses: actions/upload-artifact@v4
         with:
           name: finetune-job
-          path: |
-            # write a simple file
-            /tmp/finetune_job_id.txt
-        run: |
-          echo "${{ steps.create_job.outputs.job_id }}" > /tmp/finetune_job_id.txt
+          path: /tmp/finetune_job_id.txt

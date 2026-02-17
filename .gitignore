@@ -2,3 +2,5 @@ _llm-prototype-azure-today.txt
 /.vs/llm-prototype-azure
 /llm-prototype-azure.sln
 /.vs
+src/ChatApi/bin/
+src/ChatApi/obj/

@@ -1,0 +1,71 @@
+[
+  {
+    "type": "function",
+    "function": {
+      "name": "search_documents",
+      "description": "Search Azure AI Search and return the most relevant chunks with citations.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "query": {
+            "type": "string",
+            "description": "User query to search for."
+          },
+          "top": {
+            "type": "integer",
+            "description": "Maximum number of results to return.",
+            "minimum": 1,
+            "maximum": 20,
+            "default": 5
+          },
+          "filters": {
+            "type": "string",
+            "description": "OData filter to apply (optional)."
+          }
+        },
+        "required": ["query"],
+        "additionalProperties": false
+      }
+    }
+  },
+  {
+    "type": "function",
+    "function": {
+      "name": "get_document_by_id",
+      "description": "Fetch a specific document/chunk from Azure AI Search by id.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string",
+            "description": "Search document id."
+          }
+        },
+        "required": ["id"],
+        "additionalProperties": false
+      }
+    }
+  },
+  {
+    "type": "function",
+    "function": {
+      "name": "execute_tool",
+      "description": "Execute an agent tool by name with a JSON payload. Use this to route to /api/tools/* endpoints.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "tool": {
+            "type": "string",
+            "description": "Tool name to execute."
+          },
+          "input": {
+            "type": "object",
+            "description": "Tool input payload."
+          }
+        },
+        "required": ["tool", "input"],
+        "additionalProperties": false
+      }
+    }
+  }
+]
